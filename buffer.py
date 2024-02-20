@@ -11,19 +11,19 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 def main(args):
-
+    print("Starting main MTT")
     args.dsa = True if args.dsa == 'True' else False
     args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
     args.dsa_param = ParamDiffAug()
-
+    print("Using device: {}".format(args.device))
     channel, im_size, num_classes, class_names, mean, std, dst_train, dst_test, testloader, loader_train_dict, class_map, class_map_inv = get_dataset(args.dataset, args.data_path, args.batch_real, args.subset, args=args)
-
+    
     # print('\n================== Exp %d ==================\n '%exp)
     print('Hyper-parameters: \n', args.__dict__)
 
     save_dir = os.path.join(args.buffer_path, args.dataset)
     if args.dataset == "ImageNet":
-        save_dir = os.path.join(save_dir, args.subset, str(args.res))
+        save_dir = os.path.join(save_dir, args.subset)
     if args.dataset in ["CIFAR10", "CIFAR100"] and not args.zca:
         save_dir += "_NO_ZCA"
     save_dir = os.path.join(save_dir, args.model)

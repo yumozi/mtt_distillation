@@ -12,7 +12,9 @@ import tqdm
 from torch.utils.data import Dataset
 from torchvision import datasets, transforms
 from scipy.ndimage.interpolation import rotate as scipyrotate
-from networks import MLP, ConvNet, LeNet, AlexNet, VGG11BN, VGG11, ResNet18, ResNet18BN_AP, ResNet18_AP
+from networks import MLP, ConvNet, LeNet, AlexNet, VGG11BN, VGG11, ResNet18, ResNet18BN_AP, ResNet18_AP, ResNet18ImageNet
+import torchattacks
+import pdb
 
 class Config:
     imagenette = [0, 217, 482, 491, 497, 566, 569, 571, 574, 701]
@@ -76,7 +78,7 @@ def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None
         else:
             transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean=mean, std=std)])
         dst_train = datasets.ImageFolder(os.path.join(data_path, "train"), transform=transform) # no augmentation
-        dst_test = datasets.ImageFolder(os.path.join(data_path, "val", "images"), transform=transform)
+        dst_test = datasets.ImageFolder(os.path.join(data_path, "val"), transform=transform)
         class_names = dst_train.classes
         class_map = {x:x for x in range(num_classes)}
 
@@ -167,7 +169,7 @@ def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None
 
     testloader = torch.utils.data.DataLoader(dst_test, batch_size=128, shuffle=False, num_workers=2)
 
-
+    print("Returning dataset")
     return channel, im_size, num_classes, class_names, mean, std, dst_train, dst_test, testloader, loader_train_dict, class_map, class_map_inv
 
 
@@ -208,7 +210,8 @@ def get_network(model, channel, num_classes, im_size=(32, 32), dist=True):
     elif model == 'VGG11BN':
         net = VGG11BN(channel=channel, num_classes=num_classes)
     elif model == 'ResNet18':
-        net = ResNet18(channel=channel, num_classes=num_classes)
+        # net = ResNet18(channel=channel, num_classes=num_classes)
+        net = ResNet18ImageNet(channel=channel, num_classes=num_classes)
     elif model == 'ResNet18BN_AP':
         net = ResNet18BN_AP(channel=channel, num_classes=num_classes)
     elif model == 'ResNet18_AP':
@@ -296,18 +299,16 @@ def get_network(model, channel, num_classes, im_size=(32, 32), dist=True):
 def get_time():
     return str(time.strftime("[%Y-%m-%d %H:%M:%S]", time.localtime()))
 
-
-def epoch(mode, dataloader, net, optimizer, criterion, args, aug, texture=False):
+def epoch_atk(mode, dataloader, net, optimizer, criterion, args, aug, texture=False):
     loss_avg, acc_avg, num_exp = 0, 0, 0
     net = net.to(args.device)
 
     if args.dataset == "ImageNet":
         class_map = {x: i for i, x in enumerate(config.img_net_classes)}
 
-    if mode == 'train':
-        net.train()
-    else:
-        net.eval()
+    net.eval()
+
+    accuracies = {'PGD100': [], 'Square': [], 'AutoAttack': [], 'CW': [], 'MIM': []}
 
     for i_batch, datum in enumerate(dataloader):
         img = datum[0].float().to(args.device)
@@ -327,6 +328,40 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug, texture=False)
             lab = torch.tensor([class_map[x.item()] for x in lab]).to(args.device)
 
         n_b = lab.shape[0]
+        
+        # Apply PGD100
+        attack = torchattacks.PGD(net, eps=1/255, alpha=0.25/255, steps=100)
+        attacked_img = attack(img, lab)
+        output = net(attacked_img)
+        acc = np.sum(np.equal(np.argmax(output.cpu().data.numpy(), axis=-1), lab.cpu().data.numpy()))
+        accuracies['PGD100'].append(acc)
+        
+        # Apply Square
+        attack = torchattacks.Square(net, eps=1/255)
+        attacked_img = attack(img, lab)
+        output = net(attacked_img)
+        acc = np.sum(np.equal(np.argmax(output.cpu().data.numpy(), axis=-1), lab.cpu().data.numpy()))
+        accuracies['Square'].append(acc)
+        
+        # Apply AutoAttack
+        attack = torchattacks.AutoAttack(net, eps=1/255)
+        attacked_img = attack(img, lab)
+        output = net(attacked_img)
+        acc = np.sum(np.equal(np.argmax(output.cpu().data.numpy(), axis=-1), lab.cpu().data.numpy()))
+        accuracies['AutoAttack'].append(acc)
+
+        # Apply CW
+        attack = torchattacks.CW(net, c=0.0001)
+        attacked_img = attack(img, lab)
+        output = net(attacked_img)
+        acc = np.sum(np.equal(np.argmax(output.cpu().data.numpy(), axis=-1), lab.cpu().data.numpy()))
+        accuracies['CW'].append(acc)
+
+        # Apply MIM
+        attacked_img = mim_attack(net, img, lab, epsilon=1/255, alpha=0.25/255, iters=20, decay=1.0)
+        output = net(attacked_img)
+        acc = np.sum(np.equal(np.argmax(output.cpu().data.numpy(), axis=-1), lab.cpu().data.numpy()))
+        accuracies['MIM'].append(acc)
 
         output = net(img)
         loss = criterion(output, lab)
@@ -337,6 +372,60 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug, texture=False)
         acc_avg += acc
         num_exp += n_b
 
+        print("Clean: ", acc)
+        print("PGD100: ", np.mean(accuracies['PGD100']))
+        print("Square: ", np.mean(accuracies['Square']))
+        print("AutoAttack: ", np.mean(accuracies['AutoAttack']))
+        print("CW: ", np.mean(accuracies['CW']))
+        print("MIM: ", np.mean(accuracies['MIM']))
+        print("")
+
+    loss_avg /= num_exp
+    acc_avg /= num_exp
+
+    return loss_avg, acc_avg
+
+
+def epoch(mode, dataloader, net, optimizer, criterion, args, aug, texture=False):
+    loss_avg, acc_avg, num_exp = 0, 0, 0
+    net = net.to(args.device)
+
+    if args.dataset == "ImageNet":
+        class_map = {x: i for i, x in enumerate(config.img_net_classes)}
+
+    if mode == 'train':
+        net.train()
+    else:
+        net.eval()
+                  
+    for i_batch, datum in enumerate(dataloader):
+        img = datum[0].float().to(args.device)
+        lab = datum[1].long().to(args.device)
+
+        if mode == "train" and texture:
+            img = torch.cat([torch.stack([torch.roll(im, (torch.randint(args.im_size[0]*args.canvas_size, (1,)), torch.randint(args.im_size[0]*args.canvas_size, (1,))), (1,2))[:,:args.im_size[0],:args.im_size[1]] for im in img]) for _ in range(args.canvas_samples)])
+            lab = torch.cat([lab for _ in range(args.canvas_samples)])
+
+        if aug:
+            if args.dsa:
+                img = DiffAugment(img, args.dsa_strategy, param=args.dsa_param)
+            else:
+                img = augment(img, args.dc_aug_param, device=args.device)
+
+        if args.dataset == "ImageNet" and mode != "train":
+            lab = torch.tensor([class_map[x.item()] for x in lab]).to(args.device)
+
+        n_b = lab.shape[0]
+    
+        output = net(img)
+        loss = criterion(output, lab)
+
+        acc = np.sum(np.equal(np.argmax(output.cpu().data.numpy(), axis=-1), lab.cpu().data.numpy()))
+
+        loss_avg += loss.item()*n_b
+        acc_avg += acc
+        num_exp += n_b
+            
         if mode == 'train':
             optimizer.zero_grad()
             loss.backward()
@@ -347,7 +436,65 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug, texture=False)
 
     return loss_avg, acc_avg
 
+def mim_attack(model, data, target, epsilon, alpha, iters, decay):
+    """Perform MIM attack on the input data."""
+    original_data = data.clone().detach()
+    data.requires_grad = True
+    momentum = torch.zeros_like(data)
 
+    for _ in range(iters):
+        output = model(data)
+        model.zero_grad()
+        loss = nn.CrossEntropyLoss()(output, target)
+        loss.backward()
+        data_grad = data.grad.data
+
+        # Update the momentum
+        momentum = decay * momentum + data_grad / torch.norm(data_grad, p=1)
+        data = data.detach() + alpha * momentum.sign()
+        data = torch.clamp(data, original_data - epsilon, original_data + epsilon)
+        data = torch.clamp(data, 0, 1)  # assuming data is normalized between 0 and 1
+        data.requires_grad = True
+
+    return data.detach()
+
+def evaluate_synset_atk(it_eval, net, images_train, labels_train, testloader, args, return_loss=False, texture=False):
+    net = net.to(args.device)
+    images_train = images_train.to(args.device)
+    labels_train = labels_train.to(args.device)
+    lr = float(args.lr_net)
+    Epoch = int(args.epoch_eval_train)
+    lr_schedule = [Epoch//2+1]
+    optimizer = torch.optim.SGD(net.parameters(), lr=lr, momentum=0.9, weight_decay=0.0005)
+
+    criterion = nn.CrossEntropyLoss().to(args.device)
+
+    dst_train = TensorDataset(images_train, labels_train)
+    trainloader = torch.utils.data.DataLoader(dst_train, batch_size=args.batch_train, shuffle=True, num_workers=0)
+
+    start = time.time()
+    acc_train_list = []
+    loss_train_list = []
+
+    for ep in tqdm.tqdm(range(Epoch+1)):
+        loss_train, acc_train = epoch('train', trainloader, net, optimizer, criterion, args, aug=True, texture=texture)
+        acc_train_list.append(acc_train)
+        loss_train_list.append(loss_train)
+        if ep == Epoch:
+            loss_test, acc_test = epoch_atk('test', testloader, net, optimizer, criterion, args, aug=False)
+        if ep in lr_schedule:
+            lr *= 0.1
+            optimizer = torch.optim.SGD(net.parameters(), lr=lr, momentum=0.9, weight_decay=0.0005)
+
+    
+    time_train = time.time() - start
+
+    print('%s Evaluate_%02d: epoch = %04d train time = %d s train loss = %.6f train acc = %.4f, test acc = %.4f' % (get_time(), it_eval, Epoch, int(time_train), loss_train, acc_train, acc_test))
+
+    if return_loss:
+        return net, acc_train_list, acc_test, loss_train_list, loss_test
+    else:
+        return net, acc_train_list, acc_test
 
 def evaluate_synset(it_eval, net, images_train, labels_train, testloader, args, return_loss=False, texture=False):
     net = net.to(args.device)
@@ -371,14 +518,13 @@ def evaluate_synset(it_eval, net, images_train, labels_train, testloader, args, 
         loss_train, acc_train = epoch('train', trainloader, net, optimizer, criterion, args, aug=True, texture=texture)
         acc_train_list.append(acc_train)
         loss_train_list.append(loss_train)
-        if ep == Epoch:
-            with torch.no_grad():
-                loss_test, acc_test = epoch('test', testloader, net, optimizer, criterion, args, aug=False)
+        if ep > 800 and ep % 50 == 0:
+            loss_test, acc_test = epoch('test', testloader, net, optimizer, criterion, args, aug=False)
         if ep in lr_schedule:
             lr *= 0.1
             optimizer = torch.optim.SGD(net.parameters(), lr=lr, momentum=0.9, weight_decay=0.0005)
 
-
+    
     time_train = time.time() - start
 
     print('%s Evaluate_%02d: epoch = %04d train time = %d s train loss = %.6f train acc = %.4f, test acc = %.4f' % (get_time(), it_eval, Epoch, int(time_train), loss_train, acc_train, acc_test))

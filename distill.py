@@ -6,11 +6,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.utils
 from tqdm import tqdm
-from utils import get_dataset, get_network, get_eval_pool, evaluate_synset, get_time, DiffAugment, ParamDiffAug
+from utils import get_dataset, get_network, get_eval_pool, evaluate_synset, evaluate_synset_atk, get_time, DiffAugment, ParamDiffAug
 import wandb
 import copy
 import random
 from reparam_module import ReparamModule
+import pdb
 
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -144,7 +145,7 @@ def main(args):
 
     expert_dir = os.path.join(args.buffer_path, args.dataset)
     if args.dataset == "ImageNet":
-        expert_dir = os.path.join(expert_dir, args.subset, str(args.res))
+        expert_dir = os.path.join(expert_dir, args.subset)
     if args.dataset in ["CIFAR10", "CIFAR100"] and not args.zca:
         expert_dir += "_NO_ZCA"
     expert_dir = os.path.join(expert_dir, args.model)
@@ -208,7 +209,13 @@ def main(args):
                     image_syn_eval, label_syn_eval = copy.deepcopy(image_save.detach()), copy.deepcopy(eval_labs.detach()) # avoid any unaware modification
 
                     args.lr_net = syn_lr.item()
-                    _, acc_train, acc_test = evaluate_synset(it_eval, net_eval, image_syn_eval, label_syn_eval, testloader, args, texture=args.texture)
+                    if args.lr_net <= 0:
+                        print("REPAIR LEARNING RATE")
+                        args.lr_net = 0.001
+                    if it % 200 == 0 and it > 0:
+                        _, acc_train, acc_test = evaluate_synset_atk(it_eval, net_eval, image_syn_eval, label_syn_eval, testloader, args, texture=args.texture)
+                    else:
+                        _, acc_train, acc_test = evaluate_synset(it_eval, net_eval, image_syn_eval, label_syn_eval, testloader, args, texture=args.texture)
                     accs_test.append(acc_test)
                     accs_train.append(acc_train)
                 accs_test = np.array(accs_test)
@@ -320,6 +327,8 @@ def main(args):
                 if args.max_experts is not None:
                     buffer = buffer[:args.max_experts]
                 random.shuffle(buffer)
+
+        # pdb.set_trace()
 
         start_epoch = np.random.randint(0, args.max_start_epoch)
         starting_params = expert_trajectory[start_epoch]
