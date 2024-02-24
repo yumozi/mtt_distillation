@@ -308,7 +308,7 @@ def epoch_atk(mode, dataloader, net, optimizer, criterion, args, aug, texture=Fa
 
     net.eval()
 
-    accuracies = {'PGD100': [], 'Square': [], 'AutoAttack': [], 'CW': [], 'MIM': []}
+    accuracies = {'PGD100': [], 'Square': [], 'AutoAttack': [], 'CW': [], 'MIM': [], 'Clean': []}
 
     for i_batch, datum in enumerate(dataloader):
         img = datum[0].float().to(args.device)
@@ -366,20 +366,22 @@ def epoch_atk(mode, dataloader, net, optimizer, criterion, args, aug, texture=Fa
         output = net(img)
         loss = criterion(output, lab)
 
+        # Calculate clean accuracy
         acc = np.sum(np.equal(np.argmax(output.cpu().data.numpy(), axis=-1), lab.cpu().data.numpy()))
+        accuracies['Clean'].append(acc)
 
         loss_avg += loss.item()*n_b
         acc_avg += acc
         num_exp += n_b
 
-        print("Clean: ", acc)
-        print("PGD100: ", np.mean(accuracies['PGD100']))
-        print("Square: ", np.mean(accuracies['Square']))
-        print("AutoAttack: ", np.mean(accuracies['AutoAttack']))
-        print("CW: ", np.mean(accuracies['CW']))
-        print("MIM: ", np.mean(accuracies['MIM']))
-        print("")
-
+    print("Clean: ", np.mean(accuracies['Clean']))
+    print("PGD100: ", np.mean(accuracies['PGD100']))
+    print("Square: ", np.mean(accuracies['Square']))
+    print("AutoAttack: ", np.mean(accuracies['AutoAttack']))
+    print("CW: ", np.mean(accuracies['CW']))
+    print("MIM: ", np.mean(accuracies['MIM']))
+    print("")
+    
     loss_avg /= num_exp
     acc_avg /= num_exp
 
