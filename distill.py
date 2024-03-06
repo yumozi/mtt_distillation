@@ -32,7 +32,8 @@ def main(args):
     args.dsa = True if args.dsa == 'True' else False
     args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    eval_it_pool = np.arange(1, args.Iteration + 1, args.eval_it).tolist()
+    eval_it_pool = np.arange(0, args.Iteration + 1, args.eval_it).tolist()
+    eval_it_pool = eval_it_pool[1:] # remove 0
     channel, im_size, num_classes, class_names, mean, std, dst_train, dst_test, testloader, loader_train_dict, class_map, class_map_inv = get_dataset(args.dataset, args.data_path, args.batch_real, args.subset, args=args)
     model_eval_pool = get_eval_pool(args.eval_mode, args.model, args.model)
 
@@ -189,6 +190,7 @@ def main(args):
         # writer.add_scalar('Progress', it, it)
         wandb.log({"Progress": it}, step=it)
         ''' Evaluate synthetic data '''
+
         if it in eval_it_pool:
             for model_eval in model_eval_pool:
                 print('-------------------------\nEvaluation\nmodel_train = %s, model_eval = %s, iteration = %d'%(args.model, model_eval, it))
