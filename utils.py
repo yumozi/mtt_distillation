@@ -309,7 +309,7 @@ def epoch_atk(mode, dataloader, net, optimizer, criterion, args, aug, texture=Fa
     net.eval()
 
     accuracies = {'PGD100': [], 'Square': [], 'AutoAttack': [], 'CW': [], 'MIM': [], 'Clean': []}
-
+    count = 0
     for i_batch, datum in enumerate(dataloader):
         img = datum[0].float().to(args.device)
         lab = datum[1].long().to(args.device)
@@ -333,53 +333,56 @@ def epoch_atk(mode, dataloader, net, optimizer, criterion, args, aug, texture=Fa
         attack = torchattacks.PGD(net, eps=1/255, alpha=0.25/255, steps=100)
         attacked_img = attack(img, lab)
         output = net(attacked_img)
-        acc = np.sum(np.equal(np.argmax(output.cpu().data.numpy(), axis=-1), lab.cpu().data.numpy()))
-        accuracies['PGD100'].append(acc)
+        correct = np.equal(np.argmax(output.cpu().data.numpy(), axis=-1), lab.cpu().data.numpy())
+        accuracies['PGD100'].append(np.sum(correct))
         
         # Apply Square
         attack = torchattacks.Square(net, eps=1/255)
         attacked_img = attack(img, lab)
         output = net(attacked_img)
-        acc = np.sum(np.equal(np.argmax(output.cpu().data.numpy(), axis=-1), lab.cpu().data.numpy()))
-        accuracies['Square'].append(acc)
+        correct = np.equal(np.argmax(output.cpu().data.numpy(), axis=-1), lab.cpu().data.numpy())
+        accuracies['Square'].append(np.sum(correct))
         
         # Apply AutoAttack
         attack = torchattacks.AutoAttack(net, eps=1/255)
         attacked_img = attack(img, lab)
         output = net(attacked_img)
-        acc = np.sum(np.equal(np.argmax(output.cpu().data.numpy(), axis=-1), lab.cpu().data.numpy()))
-        accuracies['AutoAttack'].append(acc)
+        correct = np.equal(np.argmax(output.cpu().data.numpy(), axis=-1), lab.cpu().data.numpy())
+        accuracies['AutoAttack'].append(np.sum(correct))
 
         # Apply CW
         attack = torchattacks.CW(net, c=0.0001)
         attacked_img = attack(img, lab)
         output = net(attacked_img)
-        acc = np.sum(np.equal(np.argmax(output.cpu().data.numpy(), axis=-1), lab.cpu().data.numpy()))
-        accuracies['CW'].append(acc)
+        correct = np.equal(np.argmax(output.cpu().data.numpy(), axis=-1), lab.cpu().data.numpy())
+        accuracies['CW'].append(np.sum(correct))
 
         # Apply MIM
         attacked_img = mim_attack(net, img, lab, epsilon=1/255, alpha=0.25/255, iters=20, decay=1.0)
         output = net(attacked_img)
-        acc = np.sum(np.equal(np.argmax(output.cpu().data.numpy(), axis=-1), lab.cpu().data.numpy()))
-        accuracies['MIM'].append(acc)
+        correct = np.equal(np.argmax(output.cpu().data.numpy(), axis=-1), lab.cpu().data.numpy())
+        accuracies['MIM'].append(np.sum(correct))
 
         output = net(img)
         loss = criterion(output, lab)
 
         # Calculate clean accuracy
-        acc = np.sum(np.equal(np.argmax(output.cpu().data.numpy(), axis=-1), lab.cpu().data.numpy()))
-        accuracies['Clean'].append(acc)
+        correct = np.equal(np.argmax(output.cpu().data.numpy(), axis=-1), lab.cpu().data.numpy())
+        accuracies['Clean'].append(np.sum(correct))
 
         loss_avg += loss.item()*n_b
-        acc_avg += acc
+        acc_avg += np.sum(correct)
         num_exp += n_b
 
-    print("Clean: ", np.mean(accuracies['Clean']))
-    print("PGD100: ", np.mean(accuracies['PGD100']))
-    print("Square: ", np.mean(accuracies['Square']))
-    print("AutoAttack: ", np.mean(accuracies['AutoAttack']))
-    print("CW: ", np.mean(accuracies['CW']))
-    print("MIM: ", np.mean(accuracies['MIM']))
+        # Add total number of examples to count
+        count += n_b
+
+    print("Clean accuracy: ", np.sum(accuracies['Clean'])/count)
+    print("PGD100 accuracy: ", np.sum(accuracies['PGD100'])/count)
+    print("Square accuracy: ", np.sum(accuracies['Square'])/count)
+    print("AutoAttack accuracy: ", np.sum(accuracies['AutoAttack'])/count)
+    print("CW accuracy: ", np.sum(accuracies['CW'])/count)
+    print("MIM accuracy: ", np.sum(accuracies['MIM'])/count)
     print("")
     
     loss_avg /= num_exp

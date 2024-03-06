@@ -212,7 +212,7 @@ def main(args):
                     if args.lr_net <= 0:
                         print("REPAIR LEARNING RATE")
                         args.lr_net = 0.001
-                    if it % 200 == 0 and it > 0:
+                    if it % 1000 == 0 and it > 0:
                         _, acc_train, acc_test = evaluate_synset_atk(it_eval, net_eval, image_syn_eval, label_syn_eval, testloader, args, texture=args.texture)
                     else:
                         _, acc_train, acc_test = evaluate_synset(it_eval, net_eval, image_syn_eval, label_syn_eval, testloader, args, texture=args.texture)
